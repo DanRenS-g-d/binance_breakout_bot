@@ -1,0 +1,5 @@
+flask==2.3.3
+flask-socketio==5.3.6
+python-binance==1.0.19
+python-dotenv==1.0.1
+matplotlib==3.9.2

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Bot para Aymen</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+</head>
+<body class="bg-gray-100 font-sans">
+    <div class="container mx-auto p-4">
+        <h1 class="text-3xl font-bold text-center mb-6">Trading Bot para Aymen</h1>
+
+        <!-- Dashboard -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div class="bg-white p-4 rounded shadow">
+                <h2 class="text-xl font-semibold mb-2">Precio en Tiempo Real</h2>
+                <canvas id="priceChart" height="100"></canvas>
+                <div id="priceInfo" class="mt-4">
+                    <p>Precio actual: <span id="currentPrice">0</span> USDT</p>
+                    <p>Máximo: <span id="highPrice">0</span> USDT</p>
+                    <p>Mínimo: <span id="lowPrice">0</span> USDT</p>
+                    <p>Volumen: <span id="volume">0</span> (Promedio: <span id="avgVolume">0</span>)</p>
+                </div>
+            </div>
+            <div class="bg-white p-4 rounded shadow">
+                <h2 class="text-xl font-semibold mb-2">Estado del Bot</h2>
+                <p id="status" class="mb-4">Bot detenido</p>
+                <button id="startBot" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Iniciar Bot</button>
+                <button id="stopBot" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Detener Bot</button>
+            </div>
+        </div>
+
+        <!-- Trading -->
+        <div class="bg-white p-4 rounded shadow mb-6">
+            <h2 class="text-xl font-semibold mb-2">Trading</h2>
+            <table class="w-full border-collapse">
+                <thead>
+                    <tr class="bg-gray-200">
+                        <th class="border p-2">Tipo</th>
+                        <th class="border p-2">Entrada</th>
+                        <th class="border p-2">Take Profit</th>
+                        <th class="border p-2">Stop Loss</th>
+                    </tr>
+                </thead>
+                <tbody id="tradesTable">
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Backtesting -->
+        <div class="bg-white p-4 rounded shadow">
+            <h2 class="text-xl font-semibold mb-2">Backtesting</h2>
+            <form id="backtestForm" class="mb-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block">Fecha Inicio (YYYY-MM-DD)</label>
+                        <input type="text" id="startDate" class="border p-2 w-full" placeholder="2023-01-01">
+                    </div>
+                    <div>
+                        <label class="block">Fecha Fin (YYYY-MM-DD)</label>
+                        <input type="text" id="endDate" class="border p-2 w-full" placeholder="2023-12-31">
+                    </div>
+                    <div>
+                        <label class="block">Lookback</label>
+                        <input type="number" id="lookback" class="border p-2 w-full" value="20">
+                    </div>
+                    <div>
+                        <label class="block">TP (%)</label>
+                        <input type="number" id="tpPercent" class="border p-2 w-full" value="3" step="0.1">
+                    </div>
+                    <div>
+                        <label class="block">SL (%)</label>
+                        <input type="number" id="slPercent" class="border p-2 w-full" value="2" step="0.1">
+                    </div>
+                </div>
+                <button type="submit" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 mt-4">Ejecutar Backtest</button>
+            </form>
+            <div id="backtestResults" class="hidden">
+                <h3 class="text-lg font-semibold">Resultados</h3>
+                <p>Total Operaciones: <span id="totalTrades"></span></p>
+                <p>Tasa de Aciertos: <span id="winRate"></span>%</p>
+                <p>Ganancia Neta: <span id="totalProfit"></span> USDT</p>
+                <p>Saldo Final: <span id="balance"></span> USDT</p>
+                <p>Drawdown Máximo: <span id="maxDrawdown"></span> USDT</p>
+                <img id="equityCurve" class="mt-4 w-full">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const priceChart = new Chart(document.getElementById('priceChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Precio BTC/USDT',
+                    data: [],
+                    borderColor: 'blue',
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    x: { display: false },
+                    y: { beginAtZero: false }
+                }
+            }
+        });
+
+        socket.on('update', data => {
+            document.getElementById('currentPrice').textContent = data.price.toFixed(2);
+            document.getElementById('highPrice').textContent = data.high.toFixed(2);
+            document.getElementById('lowPrice').textContent = data.low.toFixed(2);
+            document.getElementById('volume').textContent = data.volume.toFixed(2);
+            document.getElementById('avgVolume').textContent = data.avg_volume.toFixed(2);
+
+            priceChart.data.labels.push(new Date().toLocaleTimeString());
+            priceChart.data.datasets[0].data.push(data.price);
+            if (priceChart.data.labels.length > 50) {
+                priceChart.data.labels.shift();
+                priceChart.data.datasets[0].data.shift();
+            }
+            priceChart.update();
+        });
+
+        socket.on('status', data => {
+            document.getElementById('status').textContent = data.message;
+        });
+
+        socket.on('trade', data => {
+            const table = document.getElementById('tradesTable');
+            const row = table.insertRow();
+            row.innerHTML = `
+                <td class="border p-2">${data.type}</td>
+                <td class="border p-2">${data.entry.toFixed(2)}</td>
+                <td class="border p-2">${data.tp.toFixed(2)}</td>
+                <td class="border p-2">${data.sl.toFixed(2)}</td>
+            `;
+        });
+
+        socket.on('monitor', data => {
+            document.getElementById('currentPrice').textContent = data.price.toFixed(2);
+        });
+
+        document.getElementById('startBot').addEventListener('click', () => {
+            fetch('/start_bot', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => alert(data.status));
+        });
+
+        document.getElementById('stopBot').addEventListener('click', () => {
+            fetch('/stop_bot', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => alert(data.status));
+        });
+
+        document.getElementById('backtestForm').addEventListener('submit', event => {
+            event.preventDefault();
+            const data = {
+                start_date: document.getElementById('startDate').value,
+                end_date: document.getElementById('endDate').value,
+                lookback: document.getElementById('lookback').value,
+                tp_percent: document.getElementById('tpPercent').value / 100,
+                sl_percent: document.getElementById('slPercent').value / 100
+            };
+            fetch('/backtest', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+                .then(response => response.json())
+                .then(result => {
+                    document.getElementById('totalTrades').textContent = result.total_trades;
+                    document.getElementById('winRate').textContent = result.win_rate.toFixed(2);
+                    document.getElementById('totalProfit').textContent = result.total_profit.toFixed(2);
+                    document.getElementById('balance').textContent = result.balance.toFixed(2);
+                    document.getElementById('maxDrawdown').textContent = result.max_drawdown.toFixed(2);
+                    document.getElementById('equityCurve').src = 'data:image/png;base64,' + result.equity_curve;
+                    document.getElementById('backtestResults').classList.remove('hidden');
+                });
+        });
+    </script>
+</body>
+</html>
